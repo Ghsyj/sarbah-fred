@@ -1,2 +1,2 @@
 # sarbah-fred
-Deceptive-Responding-Selection-Diagnostics
+PIA-Protocol: Psychometric Integrity Architecture
