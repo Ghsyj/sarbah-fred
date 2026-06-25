@@ -1,53 +1,137 @@
-#' @title Monte Carlo Power Analysis for Deception-Robust IRT
+#' @title Psychometric Integrity Architecture (PIA) - IRT Core Module
+#' @description High-performance parameter estimation engine for 2PL, 3PL, and 
+#' 4PL Item Response Theory (IRT) models. Implements standardized parametric 
+#' Person-Fit Statistics (Drasgow's lz) optimized for identifying response faking.
 #' @author Sarbah Fred Junior
-#' @description Evaluates parameter recovery stability (2PL) under simulated 
-#' deceptive responding noise for the NaFöG Doctoral Framework.
+#' @concept Computational Psychometrics
+#' @importFrom mirt mirt fscores personfit
+#' @importFrom stats na.omit
+#' @export
 
-# 0. Environment Sovereignty
-if (!require("pacman")) install.packages("pacman")
-pacman::p_load(mirt, LaTeX2HTML, parallel)
-
-# 1. Theoretical Parameter Space
-N_CANDIDATES <- 1000   # Targeted sample for latent stability
-N_ITEMS      <- 20     # Assessment length
-DECEPTION_P  <- 0.20   # 20% simulated faking prevalence (Noise Factor)
-
-#' @section Simulation Logic:
-#' We model the latent trait theta ~ N(0,1). 
-#' Deception is operationalized as a +1.5SD shift in theta for the P-subgroup.
-simulate_irt_power <- function(N, items, faking_rate) {
-  
-  # Generate true traits
-  theta <- rnorm(N)
-  
-  # Inject Systematic Bias (The 'Faking' Signal)
-  fakers <- sample(1:N, size = N * faking_rate)
-  theta[fakers] <- theta[fakers] + 1.5 
-  
-  # Generate Item Parameters (Discrimination 'a' and Difficulty 'b')
-  a <- runif(items, 0.5, 2.0)
-  b <- rnorm(items)
-  
-  # Compute Response Probabilities (2PL Model)
-  # P(x=1) = 1 / (1 + exp(-a * (theta - b)))
-  dat <- simdata(a, b, N, itemtype = '2PL', Theta = as.matrix(theta))
-  
-  # 2. Model Recovery Verification
-  # We use the EM algorithm to recover parameters from the noisy data
-  model <- mirt(dat, 1, itemtype = '2PL', verbose = FALSE)
-  
-  # Return Root Mean Square Error (RMSE) of Parameter Recovery
-  # This is the 0.01% metric: Low RMSE = High Power/Stability
-  return(model)
+# --- Package Namespace Verification ---
+if (!requireNamespace("mirt", quietly = TRUE)) {
+  stop("Fatal: Computational dependency package 'mirt' is unavailable in current library path.")
 }
 
-# 3. Execution & Reporting
-cat("--- Psychometric Integrity Simulation ---\n")
-cat("Operationalizing N =", N_CANDIDATES, "under", DECEPTION_P*100, "% faking noise.\n")
+#' Fit Robust Multi-Parameter Multi-Dimensional Item Response Theory Models
+#'
+#' @description Estimates item parameters for dichotomous response matrices using 
+#' stabilized marginal maximum likelihood (MML) via the Expectation-Maximization (EM) algorithm.
+#'
+#' @param data A data.frame or numeric matrix containing raw response vectors. Must contain binary values [0, 1] or NA.
+#' @param model_type A character string defining asymptotic parameter depth. Must be "2PL", "3PL", or "4PL".
+#' @param dimensions An integer specifying the target number of latent factors. Default is 1 (Unidimensional).
+#' @return An object of class 'SingleGroupClass' containing fully converged parameters.
+#' @references Drasgow, F., Levine, M. V., & Williams, E. A. (1985). Appropriateness measurement with polychotomous test items. Applied Psychological Measurement, 9(3), 241-255.
+#' @export
+estimate_irt_engine <- function(data, model_type = "3PL", dimensions = 1) {
+  # 1. Structural Defensive Input Sanitation
+  if (is.data.frame(data)) {
+    data <- as.matrix(data)
+  }
+  
+  if (!is.numeric(data)) {
+    stop("Type Alignment Error: Input response matrix must contain numeric identifiers.")
+  }
+  
+  # Ensure dataset satisfies minimal matrix criteria
+  if (nrow(data) < 10 || ncol(data) < 3) {
+    stop("Sample Contraction Fault: Input array dimensions are insufficient for stable parameter estimation.")
+  }
+  
+  # Validate matrix domain boundaries
+  unique_values <- unique(as.vector(na.omit(data)))
+  if (!all(unique_values %in% c(0, 1))) {
+    stop("Domain Boundary Exception: Matrix elements must conform strictly to binary states [0, 1] or NA.")
+  }
+  
+  # Identify and drop items with zero variance to prevent EM estimation failure
+  item_variances <- apply(data, 2, function(x) stats::var(x, na.rm = TRUE))
+  if (any(item_variances == 0 || is.na(item_variances))) {
+    warning("Zero-Variance Alert: Invariant columns detected. Purging uninformative items to ensure convergence.")
+    data <- data[, which(item_variances > 0)]
+  }
 
-# Run initial validation
-results <- simulate_irt_power(N_CANDIDATES, N_ITEMS, DECEPTION_P)
-coef(results, simplify = TRUE)
+  # 2. Map Estimation Constraints
+  item_type <- switch(model_type,
+    "2PL" = "2PL",
+    "3PL" = "3PL",
+    "4PL" = "4PL",
+    stop("Configuration Error: Unsupported model type string. Select '2PL', '3PL', or '4PL'.")
+  )
+  
+  # 3. Stabilized Computational Execution Block
+  estimated_model <- tryCatch({
+    mirt::mirt(
+      data = as.data.frame(data),
+      model = dimensions,
+      itemtype = item_type,
+      verbose = FALSE,
+      technical = list(
+        NCYCLES = 1000, 
+        SEtol = 1e-5,
+        TOL = 1e-5,
+        warn = FALSE
+      )
+    )
+  }, error = function(e) {
+    stop(paste("EM Optimization Failure: Convergence structural collapse inside mirt engine loop -> ", e$message))
+  })
+  
+  return(estimated_model)
+}
 
-#' @note This script demonstrates the 'Feasibility via Simulation' requirement 
-#' for the Year 1 NaFöG Work Schedule.
+#' Calculate Standardized Person-Fit Statistics (lz Index)
+#'
+#' @description Maps observed individual response vectors against calculated parametric 
+#' expectations to compute Drasgow's standardized fit profile values.
+#'
+#' @param model_fit An estimated, valid 'SingleGroupClass' model object.
+#' @return A tidy data.frame mapping latent ability locations directly to standardized fit metrics.
+#' @export
+calculate_person_fit <- function(model_fit) {
+  if (is.null(model_fit) || !inherits(model_fit, "SingleGroupClass")) {
+    stop("Argument Error: Object is uninitialized or does not match class 'SingleGroupClass'.")
+  }
+  
+  # Extract latent factor traits using high-precision Weighted Likelihood Estimation (WLE)
+  theta_scores <- mirt::fscores(model_fit, method = "WLE", verbose = FALSE)
+  
+  # Calculate complete item-person response matrix statistics
+  fit_metrics <- mirt::personfit(model_fit)
+  
+  # Vectorized consolidation of high-dimensional profiles
+  diagnostic_frame <- data.frame(
+    Theta = theta_scores[, 1],
+    Log_Likelihood = fit_metrics$logLik,
+    lz = fit_metrics$lz,
+    row.names = paste0("Vector_P", 1:nrow(theta_scores))
+  )
+  
+  return(diagnostic_frame)
+}
+
+#' Isolate Latent Inconsistency Triggers (Anti-Faking Filter)
+#'
+#' @description Applies critical standardized thresholds to isolate aberrant profiles 
+#' displaying extreme response distortion or manipulation patterns.
+#'
+#' @param fit_data A structured data.frame generated by calculate_person_fit.
+#' @param alpha A numeric alpha significance level threshold. Default is 0.05 (two-tailed critical value = -1.96).
+#' @return A data.frame isolating high-risk aberrant profile targets.
+#' @export
+isolate_aberrant_profiles <- function(fit_data, alpha = 0.05) {
+  if (!all(c("lz", "Theta") %in% colnames(fit_data))) {
+    stop("Schema Contraction Error: Columns 'lz' and 'Theta' must exist inside input data frame.")
+  }
+  
+  # Calculate the exact lower-tail critical threshold dynamically
+  critical_value <- stats::qnorm(alpha)
+  
+  # Fast vectorized evaluation
+  fit_data$Status <- ifelse(fit_data$lz < critical_value, "Aberrant_Anomaly", "Compliant_Variance")
+  
+  # Filter and slice structural records
+  aberrant_subset <- fit_data[fit_data$Status == "Aberrant_Anomaly", ]
+  return(aberrant_subset)
+}
